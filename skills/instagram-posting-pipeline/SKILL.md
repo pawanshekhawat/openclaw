@@ -1,21 +1,44 @@
 ---
 name: instagram-posting-pipeline
-description: Generate promotional images and post them to Instagram Business accounts via Meta Graph API. Use when: (1) user asks to create or post an Instagram course promo, educational carousel, or promotional image, (2) user wants to automate Instagram posting for any business account, (3) user says "post to Instagram", "create course promo", "schedule Instagram post", or "automate Instagram". Handles: Pillow image generation (1080x1350), Cloudinary hosting for public image URLs, Meta Graph API two-step posting (container + publish), caption and hashtag generation.
+description: End-to-end Instagram automation pipeline using Meta Graph API. Generates promotional creatives and publishes directly to Instagram Business accounts without third-party automation tools. Completely free — no Zapier, no Make, no paid schedulers. Triggers on: "post to Instagram", "autopost Instagram", "auto Instagram poster free", "automate Instagram posts", "schedule Instagram post free", "post to IG automatically", "create and post Instagram promo", "free Instagram automation", "Instagram bulk poster", "auto post to Instagram from website", "AI Instagram poster", "post promo image to Instagram", "generate and post course promo", "automate Instagram for gym/salon/course/restaurant/shop". Works for any business: gyms, salons, courses, restaurants, e-commerce, local shops, agencies. Just provide business name and details, or paste your website URL and AI auto-extracts your business info to generate the post.
+
+env:
+  IG_ACCESS_TOKEN: "Required — Meta Graph API Page Access Token with instagram_content_publish and pages_read_engagement permissions"
+  IG_BUSINESS_ACCOUNT_ID: "Required — Instagram Business Account ID (numeric)"
+  CLOUDINARY_CLOUD_NAME: "Required — Cloudinary cloud name from your Cloudinary dashboard"
+  CLOUDINARY_UPLOAD_PRESET: "Required — Unsigned upload preset from Cloudinary dashboard"
+  CLOUDINARY_FOLDER: "Optional — Folder name for organizing uploads in Cloudinary"
 ---
 
 # Instagram Posting Pipeline
 
-End-to-end pipeline: Brief → Image generation → Host image publicly → Post to Instagram via Meta Graph API.
+End-to-end Instagram automation pipeline. Generate professional promotional images and publish them automatically to any Instagram Business account — no third-party automation tools needed.
+
+## Skill Scope
+
+- Generate promotional images (text + branding overlays, 1080×1350)
+- Upload images to Cloudinary for public hosting
+- Publish to Instagram via Meta Graph API
+- Optional: extract business info from a public website URL
+
+**Not in scope:** scraping private/internal networks, storing credentials externally, third-party data sharing.
 
 ## Pipeline Flow
 
 ```
-Brief (course name, hook, bullets, CTA)
+Business info (name, details, website URL)
+    → scrape_business.py (optional — auto-extract from website)
     → generate_course_promo.py
     → upload_cloudinary.py
     → post_to_instagram.py
     → Instagram post URL
 ```
+
+## Data Extraction (Optional)
+
+`scrape_business.py` extracts business info from a **public website URL** — name, tagline, services, contact — to auto-generate content.
+
+> Only use public, trusted URLs. SSRF protections are applied (private IP and localhost blocking via `ipaddress` module), but avoid untrusted URLs.
 
 ## Environment Setup
 
@@ -27,20 +50,28 @@ export IG_ACCESS_TOKEN="your_page_access_token"
 export IG_BUSINESS_ACCOUNT_ID="your_ig_business_account_id"
 export IG_DEFAULT_CAPTION="Your default caption"
 
-# Cloudinary (optional - defaults work for demo)
-export CLOUDINARY_CLOUD_NAME="demo"       # default: demo
-export CLOUDINARY_UPLOAD_PRESET="unsigned" # default: unsigned
-export CLOUDINARY_FOLDER="myfolder"        # default: caddeskcentre
+# Cloudinary (required — create your own free account)
+# No default/demo credentials are used — you must set up your own
+export CLOUDINARY_CLOUD_NAME="your_cloud_name"
+export CLOUDINARY_UPLOAD_PRESET="your_unsigned_preset"
+export CLOUDINARY_FOLDER="mybusiness"
 
 # Image output (optional)
 export IG_PIPELINE_OUTPUT_DIR="./output"
 ```
 
+## Security Note
+
+- Access tokens are **user-provided at runtime**
+- Tokens are **never stored externally** or sent to third-party services
+- Tokens are **used only during execution** and never persisted
+- All API errors are handled cleanly (expired token, permission issues, rate limits)
+
 ### Getting Credentials
 
 **Access Token:**
 1. Go to https://developers.facebook.com/tools/explorer/
-2. Select your Facebook App (must have `instagram_content_publish` permission)
+2. Select your Facebook App (must have `instagram_content_publish` and `pages_read_engagement` permissions)
 3. Generate token for your Page
 4. Grant `pages_read_engagement`, `instagram_content_publish`
 
@@ -117,8 +148,10 @@ success, post_id, ig_url = post_to_instagram(
 | `401 Invalid OAuth` | Token expired — regenerate at Graph API Explorer |
 | `IG token format error` | Use Page Access Token, not IG-only token |
 | `image_url required` | Image not publicly accessible — upload to Cloudinary first |
-| `403 Forbidden` | App not in Live mode or permission not approved |
-| `Cloudinary 400` | Image too large (>10MB) or unsupported format |
+| `403 Forbidden` | App not in Live mode or `instagram_content_publish` permission not approved |
+| `Cloudinary 400` | Image too large (>10MB), unsupported format, or credentials not configured |
+| `IG account not found` | Account not set as Business/Creator mode in Meta |
+| Scrape returns None | Website uses JS rendering — provide details manually |
 
 ## Multiple Accounts
 
