@@ -5,12 +5,18 @@ Uses only stdlib (urllib) + html.parser - no beautifulsoup required.
 Usage:
     python scrape_business.py <website_url>
 
-Security: Blocks localhost, private IPs, and internal network addresses
-          to prevent accidental SSRF access to internal resources.
+Security:
+  - Scheme validation (http/https only)
+  - DNS resolution + private-IP blocking (blocks localhost, private,
+    loopback, link-local, multicast, and reserved ranges)
+  - No redirects followed to untrusted hosts
+  - No internal/private network addresses accepted
 """
 
 import urllib.request
 import urllib.parse
+import socket
+import ssl
 import re
 import sys
 import html.parser
@@ -68,6 +74,24 @@ class BusinessInfoParser(html.parser.HTMLParser):
         elif self.in_meta_desc:
             pass  # already captured in attribute
 
+def _is_public_host(hostname):
+    """
+    Resolve hostname via DNS and verify ALL returned IPs are public.
+    Returns False if any IP falls in private/loopback/link-local/reserved/multicast range.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+        for info in infos:
+            ip_str = info[4][0]
+            ip = ipaddress.ip_address(ip_str)
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def scrape_business_info(url):
     """
     Scrape a website and extract business-relevant information.
@@ -78,31 +102,39 @@ def scrape_business_info(url):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    # SSRF protection: block private/internal network addresses
+    # --- SSRF protection ---
     parsed = urllib.parse.urlparse(url)
-    try:
-        host = parsed.hostname
-        # Check for localhost and similar
-        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"):
-            return {"error": "Internal/loopback addresses are not allowed.", "url": url}
-        # Check if the host resolves to a private/internal IP
-        try:
-            addr = ipaddress.ip_address(host)
-            if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_multicast:
-                return {"error": f"Private/internal IP addresses are not allowed ({addr}).", "url": url}
-        except ValueError:
-            # Not an IP address — check hostname for private-like patterns
-            private_patterns = (".internal", ".intranet", ".private", ".local",
-                                "localhost", "home", "router", "gateway")
-            if any(host.lower().endswith(p) for p in private_patterns):
-                return {"error": f"Internal network hostnames are not allowed ({host}).", "url": url}
-    except Exception:
-        pass  # Let it proceed — URL will fail naturally if malformed
+
+    # 1. Scheme block
+    if parsed.scheme not in ("http", "https"):
+        return {"error": "Only http and https URLs are allowed.", "url": url}
+
+    hostname = parsed.hostname
+    if not hostname:
+        return {"error": "Could not determine hostname.", "url": url}
+
+    # 2. Block obvious localhost / internal hostnames
+    blocked_names = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]",
+                     "internal", "intranet", "private", "local", "home",
+                     "router", "gateway", "bind")
+    if hostname.lower() in blocked_names or any(hostname.lower().endswith(p) for p in blocked_names):
+        return {"error": f"Internal or reserved hostname blocked ({hostname}).", "url": url}
+
+    # 3. DNS resolution — block if ANY resolved IP is non-public
+    if not _is_public_host(hostname):
+        return {"error": f"Hostname resolves to a private/internal IP ({hostname}).", "url": url}
+
+    # 4. HTTPS + SSL
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
 
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
             html_content = r.read().decode("utf-8", errors="ignore")
+    except ssl.SSLCertVerificationError as e:
+        return {"error": f"SSL certificate error for {hostname} — {e}", "url": url}
     except Exception as e:
         return {"error": str(e), "url": url}
 
