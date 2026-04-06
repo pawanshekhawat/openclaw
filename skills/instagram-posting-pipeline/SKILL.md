@@ -47,13 +47,14 @@ Business info (name, details, website URL)
 - Parses the HTML response using Python's built-in `html.parser`
 - Extracts title, meta description, H1 tags, paragraphs, and contact patterns
 - Returns structured data to populate the image generation prompt
+- May extract email and phone if publicly available
 
 **What it does NOT do:**
-- Does not follow redirects to third-party domains
+- Does not follow redirects to third-party domains (all 3xx responses are blocked)
 - Does not access internal/private networks
 - Does not store or retransmit scraped data
 
-> Do not provide internal/private URLs (e.g. `localhost`, `192.168.x.x`, `10.x.x.x`). SSRF protections are enforced: DNS resolution + private-IP blocking (via `ipaddress` module), SSL certificate verification, and scheme/hostname allowlist.
+> Do not provide internal/private URLs (e.g. `localhost`, `192.168.x.x`, `10.x.x.x`). SSRF protections enforced: DNS resolution + private-IP blocking (via `ipaddress` module), SSL certificate verification, scheme/hostname allowlist, and **all redirects are explicitly blocked** (no following 3xx responses to any destination).
 
 ## Environment Setup
 
@@ -66,7 +67,7 @@ export IG_BUSINESS_ACCOUNT_ID="your_ig_business_account_id"
 export IG_DEFAULT_CAPTION="Your default caption"
 
 # Cloudinary (required — create your own free account)
-# No default/demo credentials are used — you must set up your own
+# No default credentials are used — you must set up your own
 export CLOUDINARY_CLOUD_NAME="your_cloud_name"
 export CLOUDINARY_UPLOAD_PRESET="your_unsigned_preset"
 export CLOUDINARY_FOLDER="mybusiness"
@@ -135,7 +136,7 @@ python scripts/generate_course_promo.py
 python scripts/upload_cloudinary.py <image_path> [folder]
 ```
 
-Returns a public URL like `https://res.cloudinary.com/demo/image/upload/xyz.png`
+Returns a public URL like `https://res.cloudinary.com/image/upload/xyz.png`
 
 ### Step 3: Post to Instagram
 
@@ -149,7 +150,7 @@ Or programmatically:
 from post_to_instagram import post_to_instagram
 
 success, post_id, ig_url = post_to_instagram(
-    image_url="https://res.cloudinary.com/demo/image/upload/xyz.png",
+    image_url="https://res.cloudinary.com/image/upload/xyz.png",
     caption="Your caption with #hashtags"
 )
 ```
