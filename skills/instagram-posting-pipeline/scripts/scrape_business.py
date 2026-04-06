@@ -124,15 +124,68 @@ def scrape_business_info(url):
     if not _is_public_host(hostname):
         return {"error": f"Hostname resolves to a private/internal IP ({hostname}).", "url": url}
 
-    # 4. HTTPS + SSL
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Strict redirect blocker — prevents following any redirect to any host."""
+    def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+        return None  # Block all redirects
+
+    def http_response(self, request, response):
+        return response
+
+    https_response = http_response
+
+
+def scrape_business_info(url):
+    """
+    Scrape a website and extract business-relevant information.
+    Returns a dict with: name, tagline, description, services, contact
+    """
+    # Normalize URL
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    # --- SSRF protection ---
+    parsed = urllib.parse.urlparse(url)
+
+    # 1. Scheme block
+    if parsed.scheme not in ("http", "https"):
+        return {"error": "Only http and https URLs are allowed.", "url": url}
+
+    hostname = parsed.hostname
+    if not hostname:
+        return {"error": "Could not determine hostname.", "url": url}
+
+    # 2. Block obvious localhost / internal hostnames
+    blocked_names = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]",
+                     "internal", "intranet", "private", "local", "home",
+                     "router", "gateway", "bind")
+    if hostname.lower() in blocked_names or any(hostname.lower().endswith(p) for p in blocked_names):
+        return {"error": f"Internal or reserved hostname blocked ({hostname}).", "url": url}
+
+    # 3. DNS resolution — block if ANY resolved IP is non-public
+    if not _is_public_host(hostname):
+        return {"error": f"Hostname resolves to a private/internal IP ({hostname}).", "url": url}
+
+    # 4. HTTPS + SSL + NO REDIRECTS
     ctx = ssl.create_default_context()
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
 
+    opener = urllib.request.build_opener(_NoRedirect)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
-            html_content = r.read().decode("utf-8", errors="ignore")
+        response = opener.open(req, timeout=15, context=ctx)
+        status = response.getcode()
+        if 300 <= status < 400:
+            return {"error": f"Redirect blocked — server responded with HTTP {status}. "
+                               "Only direct HTTP responses are allowed.", "url": url}
+        html_content = response.read().decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            loc = e.headers.get("Location", "")
+            return {"error": f"Redirect blocked to {loc!r}. Only direct responses allowed.", "url": url}
+        return {"error": f"HTTP error {e.code}: {e.reason}", "url": url}
     except ssl.SSLCertVerificationError as e:
         return {"error": f"SSL certificate error for {hostname} — {e}", "url": url}
     except Exception as e:
